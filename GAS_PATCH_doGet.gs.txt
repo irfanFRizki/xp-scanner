@@ -1,0 +1,196 @@
+// ============================================================
+// TAMBAHAN UNTUK Code.gs — API JSONP untuk aplikasi Android
+// Tempelkan blok ini ke Code.gs, lalu GANTI fungsi doGet(e) yang
+// lama dengan versi baru di bawah (jangan ada dua fungsi doGet).
+// Setelah itu: Deploy > Manage deployments > New deployment
+//   - Type: Web app
+//   - Execute as: Me
+//   - Who has access: Anyone (atau "Anyone with Google Account"
+//     kalau mau dibatasi — tapi JSONP dari APK butuh "Anyone")
+// Salin URL /exec hasil deploy ke pengaturan (⚙) di aplikasi Android.
+// ============================================================
+
+function doGet(e) {
+  var action = e && e.parameter ? e.parameter.action : null;
+
+  if (action === 'lookup') {
+    return _apiLookup(e.parameter);
+  }
+
+  // Perilaku lama tetap dipertahankan: serve halaman web app biasa
+  return HtmlService.createHtmlOutputFromFile('index')
+    .setTitle('Sistem Surat Jalan Sampel')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Cari 1 baris di sheet "Link foto" berdasarkan kode kanonik (kolom A),
+ * lalu ambil URL foto dari kolom lain di baris yang sama (mis. kolom E).
+ * Pakai TextFinder supaya tidak perlu baca seluruh sheet tiap request —
+ * penting kalau sheet "Link foto" isinya ribuan baris.
+ */
+function getFotoByKode(kode) {
+  try {
+    kode = String(kode || '').trim();
+    if (!kode) return null;
+
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_NAME_FOTO);
+    if (!sheet) return null;
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+
+    // Cari hanya di kolom A (kode barang) supaya tidak salah match
+    // dengan teks lain (deskripsi dsb) di kolom lain.
+    var colA = sheet.getRange(1, 1, lastRow, 1);
+    var cell = colA.createTextFinder(kode).matchEntireCell(true).matchCase(false).findNext();
+    if (!cell) return null;
+
+    var row = cell.getRow();
+    var rowValues = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    var urlFoto = '', deskripsi = '';
+    for (var c = 1; c < rowValues.length; c++) {
+      var v = String(rowValues[c] || '').trim();
+      if (!v) continue;
+      var isUrl = v.indexOf('http') === 0 || v.indexOf('.jpg') !== -1 ||
+                  v.indexOf('.jpeg') !== -1 || v.indexOf('.png') !== -1 ||
+                  v.indexOf('drive.google.com') !== -1;
+      if (isUrl && !urlFoto) urlFoto = v;
+      if (!isUrl && !deskripsi) deskripsi = v;
+    }
+
+    return { kode: String(rowValues[0]).trim(), url: urlFoto, deskripsi: deskripsi };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Versi lengkap dari getKodeBySupplierRef(). Untuk tiap kode kanonik yang
+ * cocok dengan kode supplier yang dicari, kembalikan DUA daftar PL+Tahun:
+ *
+ *   - plsSupplier : PL+Tahun dari baris yang benar-benar cocok dengan kode
+ *                    supplier yang dicari (biasanya cuma 1 tahun tertentu).
+ *   - plsAll      : SEMUA PL+Tahun di seluruh data yang memuat kode kanonik
+ *                    itu, walau di tahun lain kode supplier-nya beda.
+ *                    (mis. kode 0121260200 dipakai di PL 2024 dan 2026,
+ *                    walau yang di-scan cuma cocok ke baris 2026)
+ *
+ * @return {Array} Array of { kode, deskripsi, plsSupplier, plsAll }
+ */
+function _lookupKodeDetail(refCode) {
+  if (!refCode) return [];
+  var refTrim = String(refCode).trim().toUpperCase();
+  var rows = _allPLRows();
+
+  function buildLabel(row) {
+    var kolian = String(row.kolian || '').trim();
+    var tahun  = String(row.tahun  || '').trim();
+    return {
+      kolian: kolian,
+      tahun: tahun,
+      label: [kolian, tahun].filter(function(x) { return x; }).join(' '),
+      key: kolian + '||' + tahun
+    };
+  }
+
+  // Pass 1 — index SEMUA baris per kode (buat plsAll), satu kali baca saja.
+  var kodeIndex = {}; // kode -> { deskripsi, plsAll: [], seenAll: {} }
+  rows.forEach(function(row) {
+    var kode = row.kode;
+    if (!kode) return;
+    if (!kodeIndex[kode]) kodeIndex[kode] = { deskripsi: row.deskripsi, plsAll: [], seenAll: {} };
+    var idx = kodeIndex[kode];
+    if (!idx.deskripsi && row.deskripsi) idx.deskripsi = row.deskripsi;
+
+    var l = buildLabel(row);
+    if (l.label && !idx.seenAll[l.key]) {
+      idx.seenAll[l.key] = true;
+      idx.plsAll.push({ kolian: l.kolian, tahun: l.tahun, label: l.label });
+    }
+  });
+
+  // Pass 2 — cari baris yang benar-benar cocok dengan kode supplier yang
+  // dicari (buat plsSupplier).
+  var byKode = {};
+  var order = [];
+  rows.forEach(function(row) {
+    var kode = row.kode;
+    if (!kode) return;
+
+    var matched = false;
+    if (row.refE) {
+      var partsD = row.refE.toUpperCase().split('/').map(function(p) { return p.trim(); });
+      if (partsD.indexOf(refTrim) !== -1) matched = true;
+    }
+    if (!matched && row.refD) {
+      var partsC = row.refD.toUpperCase().split('/').map(function(p) { return p.trim(); });
+      if (partsC.indexOf(refTrim) !== -1) matched = true;
+    }
+    if (!matched) return;
+
+    if (!byKode[kode]) {
+      byKode[kode] = { plsSupplier: [], seenSupplier: {} };
+      order.push(kode);
+    }
+    var entry = byKode[kode];
+    var l = buildLabel(row);
+    if (l.label && !entry.seenSupplier[l.key]) {
+      entry.seenSupplier[l.key] = true;
+      entry.plsSupplier.push({ kolian: l.kolian, tahun: l.tahun, label: l.label });
+    }
+  });
+
+  return order.map(function(kode) {
+    var idx = kodeIndex[kode] || { deskripsi: '', plsAll: [] };
+    return {
+      kode: kode,
+      deskripsi: idx.deskripsi,
+      plsSupplier: byKode[kode].plsSupplier,
+      plsAll: idx.plsAll
+    };
+  });
+}
+
+/**
+ * Endpoint JSONP: ?action=lookup&kode=X001237323&callback=namaFungsiJS
+ * Dipakai oleh aplikasi Android (fetch via <script> tag, bukan fetch()
+ * biasa, supaya tidak kena blokir CORS bawaan Apps Script).
+ * Setiap hasil kode kanonik ikut dilengkapi field `foto` (URL) kalau
+ * ditemukan di sheet "Link foto", dan field `plsSupplier`/`plsAll`
+ * untuk info PL+Tahun.
+ */
+function _apiLookup(params) {
+  var kode = params.kode || params.ref || '';
+  var callback = params.callback;
+  var payload;
+
+  try {
+    var hasil = _lookupKodeDetail(kode);
+
+    hasil.forEach(function(item) {
+      var foto = getFotoByKode(item.kode);
+      item.foto = (foto && foto.url) ? foto.url : '';
+    });
+
+    payload = { success: true, query: kode, data: hasil };
+  } catch (err) {
+    payload = { success: false, query: kode, error: String(err) };
+  }
+
+  var json = JSON.stringify(payload);
+
+  if (callback) {
+    // Validasi sederhana nama callback supaya tidak disalahgunakan
+    var safeCallback = String(callback).replace(/[^a-zA-Z0-9_$]/g, '');
+    return ContentService
+      .createTextOutput(safeCallback + '(' + json + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
+}

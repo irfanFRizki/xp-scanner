@@ -1,0 +1,12 @@
+{
+  "appId": "com.xuping.scanner",
+  "appName": "XUPING Scanner",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}
