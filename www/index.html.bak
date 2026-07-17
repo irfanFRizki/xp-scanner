@@ -180,6 +180,7 @@
     <div id="status" class="status"></div>
 
     <div id="resultCard" class="result-card">
+      <button class="btn btn-outline" id="btnBackToList" style="display:none; width:100%; justify-content:center; margin-bottom:12px;">&larr; Kembali ke daftar</button>
       <div class="label">Kode</div>
       <div class="kode" id="resKode">-</div>
       <div class="deskripsi" id="resDeskripsi"></div>
@@ -374,6 +375,9 @@
     });
   }
 
+  var elBtnBack = document.getElementById("btnBackToList");
+  var lastMultiContext = null;
+
   function showSingleResult(item, ref){
     elResultCard.classList.add('active');
     elMultiList.innerHTML = '';
@@ -385,9 +389,21 @@
 
     renderFoto(elFotoWrap, item.foto || '');
     currentShareItem = item;
+
+    if (lastMultiContext) {
+      elBtnBack.style.display = 'flex';
+      elBtnBack.textContent = '\u2190 Kembali ke daftar (' + lastMultiContext.list.length + ' hasil)';
+    } else {
+      elBtnBack.style.display = 'none';
+    }
   }
 
+  elBtnBack.addEventListener("click", function () {
+    if (lastMultiContext) showMultiResult(lastMultiContext.list, lastMultiContext.ref);
+  });
+
   function showMultiResult(list, ref){
+    elBtnBack.style.display = "none";
     elResultCard.classList.remove('active');
     elMultiList.innerHTML = '';
     list.forEach(function(item){
@@ -412,6 +428,8 @@
   }
 
   function clearResult(){
+    elBtnBack.style.display = "none";
+    lastMultiContext = null;
     elResultCard.classList.remove('active');
     elMultiList.innerHTML = '';
     elFotoWrap.innerHTML = '';
@@ -529,8 +547,10 @@
       setStatus('Ditemukan ' + list.length + ' hasil.', 'ok');
       pushHistory(refCode, list[0].kode);
       if (list.length === 1){
+        lastMultiContext = null;
         showSingleResult(list[0], refCode);
       } else {
+        lastMultiContext = { list: list, ref: refCode };
         showMultiResult(list, refCode);
       }
     });
