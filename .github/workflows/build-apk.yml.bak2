@@ -1,0 +1,71 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING: ${{ secrets.XUPING_KEYSTORE_BASE64 != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Decode signing keystore (kalau secret sudah diset)
+        if: ${{ env.HAS_SIGNING == 'true' }}
+        run: |
+          echo "${{ secrets.XUPING_KEYSTORE_BASE64 }}" | base64 -d > android/app/xuping-scanner.keystore
+          echo "XUPING_KEYSTORE_PATH=$(pwd)/android/app/xuping-scanner.keystore" >> $GITHUB_ENV
+          echo "XUPING_KEYSTORE_PASSWORD=${{ secrets.XUPING_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "XUPING_KEY_ALIAS=${{ secrets.XUPING_KEY_ALIAS }}" >> $GITHUB_ENV
+          echo "XUPING_KEY_PASSWORD=${{ secrets.XUPING_KEY_PASSWORD }}" >> $GITHUB_ENV
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xuping-scanner-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      # Hanya jalan kalau push-nya berupa tag versi (mis. v1.1.0) —
+      # inilah yang dibaca oleh fitur "Cek Update" di dalam aplikasi
+      # lewat GitHub API /releases/latest.
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

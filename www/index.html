@@ -155,7 +155,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>XUPING <span>SCANNER</span></h1>
+    <h1>XUPING <span>SCANNER</span> <span id="appVersionBadge" style="font-size:10px; color:var(--text-muted); font-weight:400; -webkit-text-fill-color:var(--text-muted); text-shadow:none;"></span></h1>
     <button class="gear" id="btnSettings">⚙</button>
   </header>
 
@@ -839,6 +839,9 @@
   });
 
   renderHistory();
+  var elVersionBadge = document.getElementById('appVersionBadge');
+  if (elVersionBadge) elVersionBadge.textContent = 'v' + APP_VERSION;
+
   if (!getGasUrl()) openSettings();
   checkForUpdate(true); // cek update senyap saat app dibuka, tanpa ganggu user kalau gagal/tidak ada update
 })();
