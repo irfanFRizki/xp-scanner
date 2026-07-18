@@ -16,7 +16,20 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        debug {
+            if (System.getenv("XUPING_KEYSTORE_PATH") != null) {
+                storeFile file(System.getenv("XUPING_KEYSTORE_PATH"))
+                storePassword System.getenv("XUPING_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("XUPING_KEY_ALIAS")
+                keyPassword System.getenv("XUPING_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

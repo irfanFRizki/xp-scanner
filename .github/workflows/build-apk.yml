@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING: ${{ secrets.XUPING_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +37,15 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
+
+      - name: Decode signing keystore (kalau secret sudah diset)
+        if: ${{ env.HAS_SIGNING == 'true' }}
+        run: |
+          echo "${{ secrets.XUPING_KEYSTORE_BASE64 }}" | base64 -d > android/app/xuping-scanner.keystore
+          echo "XUPING_KEYSTORE_PATH=$(pwd)/android/app/xuping-scanner.keystore" >> $GITHUB_ENV
+          echo "XUPING_KEYSTORE_PASSWORD=${{ secrets.XUPING_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "XUPING_KEY_ALIAS=${{ secrets.XUPING_KEY_ALIAS }}" >> $GITHUB_ENV
+          echo "XUPING_KEY_PASSWORD=${{ secrets.XUPING_KEY_PASSWORD }}" >> $GITHUB_ENV
 
       - name: Build debug APK
         working-directory: android
