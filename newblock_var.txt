@@ -1,0 +1,6 @@
+  var elUpdateBanner = $('updateBanner');
+  var elUpdateBannerText = $('updateBannerText');
+  var elBtnDoUpdate = $('btnDoUpdate');
+  var btnDoUpdateOriginalText = elBtnDoUpdate.textContent;
+  var latestVersionInfo = null; // { tag, apkUrl, size, localUri, ready }
+  var autoDownloadInFlight = false;

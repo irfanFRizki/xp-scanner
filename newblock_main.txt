@@ -1,0 +1,169 @@
+  function showUpdateBanner(tag){
+    elUpdateBannerText.textContent = '🎉 Update v' + tag.replace(/^v/i,'') + ' ditemukan, mengunduh otomatis...';
+    elBtnDoUpdate.disabled = true;
+    elBtnDoUpdate.textContent = 'Mengunduh...';
+    elUpdateBanner.style.display = 'flex';
+  }
+  function setBannerDownloading(tag, pct){
+    elUpdateBannerText.textContent = 'Mengunduh update v' + tag.replace(/^v/i,'') + ' (' + pct + '%)...';
+  }
+  function setBannerReady(tag){
+    elUpdateBannerText.textContent = '✅ Update v' + tag.replace(/^v/i,'') + ' siap dipasang!';
+    elBtnDoUpdate.disabled = false;
+    elBtnDoUpdate.textContent = 'Pasang Sekarang';
+  }
+  function hideUpdateBanner(){
+    elUpdateBanner.style.display = 'none';
+    elBtnDoUpdate.disabled = false;
+    elBtnDoUpdate.textContent = btnDoUpdateOriginalText;
+  }
+
+  async function checkForUpdate(silent){
+    var repo = getRepo();
+    if (!repo){
+      if (!silent) setStatus("Isi dulu Repo GitHub di menu Pengaturan.", "err");
+      return;
+    }
+    try {
+      var res = await fetch("https://api.github.com/repos/" + repo + "/releases/latest");
+      if (!res.ok) throw new Error("Repo/release tidak ditemukan (HTTP " + res.status + ")");
+      var data = await res.json();
+      var tag = (data.tag_name || "").trim();
+      var asset = (data.assets || []).find(function(a){ return /\.apk$/i.test(a.name); });
+      if (!tag || !asset) throw new Error("Release ada tapi tidak ada file .apk terlampir");
+      if (isNewerVersion(tag, APP_VERSION)){
+        var samaVersiSblmnya = latestVersionInfo && latestVersionInfo.tag === tag;
+        latestVersionInfo = {
+          tag: tag,
+          apkUrl: asset.browser_download_url,
+          size: asset.size,
+          localUri: samaVersiSblmnya ? latestVersionInfo.localUri : null,
+          ready: samaVersiSblmnya ? latestVersionInfo.ready : false
+        };
+        if (latestVersionInfo.ready){
+          setBannerReady(tag);
+          elUpdateBanner.style.display = 'flex';
+        } else {
+          showUpdateBanner(tag);
+          autoDownloadUpdate(); // unduh sendiri di background, tanpa perlu tap apa pun
+        }
+        if (!silent) setStatus("Update v" + tag.replace(/^v/i,"") + " tersedia.", "ok");
+      } else {
+        hideUpdateBanner();
+        if (!silent) setStatus("Aplikasi sudah versi terbaru (v" + APP_VERSION + ").", "ok");
+      }
+    } catch (err){
+      if (!silent) setStatus("Gagal cek update: " + err.message, "err");
+    }
+  }
+
+  function arrayBufferToBase64(buffer){
+    var binary = '';
+    var bytes = new Uint8Array(buffer);
+    var chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk){
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function downloadWithProgress(url, onProgress){
+    return new Promise(function(resolve, reject){
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+      xhr.onprogress = function(e){
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = function(){
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
+        else reject(new Error('Download gagal (HTTP ' + xhr.status + ')'));
+      };
+      xhr.onerror = function(){ reject(new Error('Download gagal — cek koneksi internet.')); };
+      xhr.send();
+    });
+  }
+
+  // Download APK otomatis di background begitu update terdeteksi — user
+  // tidak perlu tap apa pun untuk memulai unduhan, cukup tap "Pasang
+  // Sekarang" begitu file selesai diunduh. Nama file menyertakan nomor
+  // versi, jadi kalau app dibuka lagi sebelum sempat install, tidak
+  // perlu download ulang dari awal.
+  async function autoDownloadUpdate(){
+    if (!latestVersionInfo || latestVersionInfo.ready || autoDownloadInFlight) return;
+    var Plugins = window.Capacitor && window.Capacitor.Plugins;
+    if (!Plugins || !Plugins.Filesystem) return; // di browser biasa, lewati diam-diam
+
+    autoDownloadInFlight = true;
+    var tag = latestVersionInfo.tag;
+    var fileName = 'xuping-update-' + tag.replace(/[^a-zA-Z0-9_.-]/g, '') + '.apk';
+
+    try {
+      try {
+        await Plugins.Filesystem.stat({ path: fileName, directory: 'CACHE' });
+        var uriResExisting = await Plugins.Filesystem.getUri({ path: fileName, directory: 'CACHE' });
+        if (latestVersionInfo && latestVersionInfo.tag === tag){
+          latestVersionInfo.localUri = uriResExisting.uri;
+          latestVersionInfo.ready = true;
+          setBannerReady(tag);
+        }
+        return;
+      } catch (eStat) { /* belum pernah diunduh, lanjut download di bawah */ }
+
+      var buffer = await downloadWithProgress(latestVersionInfo.apkUrl, function(pct){
+        if (latestVersionInfo && latestVersionInfo.tag === tag) setBannerDownloading(tag, pct);
+      });
+      var base64 = arrayBufferToBase64(buffer);
+      await Plugins.Filesystem.writeFile({ path: fileName, data: base64, directory: 'CACHE' });
+      var uriRes = await Plugins.Filesystem.getUri({ path: fileName, directory: 'CACHE' });
+
+      if (latestVersionInfo && latestVersionInfo.tag === tag){
+        latestVersionInfo.localUri = uriRes.uri;
+        latestVersionInfo.ready = true;
+        setBannerReady(tag);
+      }
+    } catch (err){
+      if (latestVersionInfo && latestVersionInfo.tag === tag){
+        elUpdateBannerText.textContent = 'Gagal unduh otomatis: ' + err.message;
+        elBtnDoUpdate.disabled = false;
+        elBtnDoUpdate.textContent = 'Coba Lagi';
+      }
+    } finally {
+      autoDownloadInFlight = false;
+    }
+  }
+
+  async function doUpdate(){
+    if (!latestVersionInfo){ setStatus('Belum ada info update. Cek update dulu.', 'err'); return; }
+    var Plugins = window.Capacitor && window.Capacitor.Plugins;
+    if (!Plugins || !Plugins.ApkInstaller || !Plugins.Filesystem){
+      setStatus('Fitur update cuma jalan di APK terpasang, bukan di browser.', 'err');
+      return;
+    }
+
+    if (!latestVersionInfo.ready || !latestVersionInfo.localUri){
+      setStatus('Update masih diunduh, tunggu sebentar lalu tap lagi.', 'err');
+      autoDownloadUpdate();
+      return;
+    }
+
+    try {
+      var perm = await Plugins.ApkInstaller.canInstall();
+      if (!perm.allowed){
+        setLoadingStatus('Minta izin "Install app tidak dikenal"...');
+        await Plugins.ApkInstaller.requestInstallPermission();
+        setStatus('Aktifkan izin "Izinkan dari sumber ini" di layar yang terbuka, lalu tap Pasang Sekarang lagi.', 'err');
+        return;
+      }
+      setLoadingStatus('Membuka installer...');
+      await Plugins.ApkInstaller.install({ path: latestVersionInfo.localUri });
+      setStatus('Installer dibuka - ikuti langkah install di layar.', 'ok');
+      hideUpdateBanner();
+    } catch (err){
+      setStatus('Update gagal: ' + err.message, 'err');
+    }
+  }
+
+  $('btnDoUpdate').addEventListener('click', doUpdate);
+  $('btnDismissUpdate').addEventListener('click', hideUpdateBanner);
+  $('btnCheckUpdate').addEventListener('click', function(){ checkForUpdate(false); });
