@@ -2,8 +2,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*.*.*' ]
+    branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch: {}
 
 permissions:
@@ -16,28 +16,55 @@ jobs:
       HAS_SIGNING: ${{ secrets.XUPING_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: 20
+          node-version: '20'
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9 # v4.2.2
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Set app version dari tag git (kalau build dari tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Determine version
+        id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/var APP_VERSION = '[^']*';/var APP_VERSION = '${VERSION}';/" www/index.html
-          echo "APP_VERSION diset otomatis ke ${VERSION}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            IS_RELEASE=true
+          else
+            # PR/branch build: use run number as patch, 0.0.0-dev
+            VERSION="0.0.${{ github.run_number }}-dev"
+            IS_RELEASE=false
+          fi
+          # Extract versionCode from version (major*10000 + minor*100 + patch)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION%%-*}"
+          VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + (PATCH % 100)))
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_OUTPUT
+          echo "IS_RELEASE=${IS_RELEASE}" >> $GITHUB_OUTPUT
+
+      - name: Inject version into www/index.html
+        run: |
+          sed -i "s/var APP_VERSION = '[^']*';/var APP_VERSION = '${{ steps.version.outputs.VERSION }}';/" www/index.html
+          echo "www/index.html APP_VERSION -> ${{ steps.version.outputs.VERSION }}"
+
+      - name: Inject version into android/app/build.gradle
+        run: |
+          sed -i "s/versionCode [0-9]*/versionCode ${{ steps.version.outputs.VERSION_CODE }}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.VERSION }}\"/" android/app/build.gradle
+          echo "android/app/build.gradle versionCode -> ${{ steps.version.outputs.VERSION_CODE }}, versionName -> ${{ steps.version.outputs.VERSION }}"
+
+      - name: Inject version into package.json
+        run: |
+          npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
+          echo "package.json version -> $(node -p "require('./package.json').version")"
 
       - name: Sync Capacitor
         run: npx cap sync android
@@ -45,7 +72,7 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
-      - name: Decode signing keystore (kalau secret sudah diset)
+      - name: Decode signing keystore
         if: ${{ env.HAS_SIGNING == 'true' }}
         run: |
           echo "${{ secrets.XUPING_KEYSTORE_BASE64 }}" | base64 -d > android/app/xuping-scanner.keystore
@@ -54,24 +81,21 @@ jobs:
           echo "XUPING_KEY_ALIAS=${{ secrets.XUPING_KEY_ALIAS }}" >> $GITHUB_ENV
           echo "XUPING_KEY_PASSWORD=${{ secrets.XUPING_KEY_PASSWORD }}" >> $GITHUB_ENV
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e9274886f13407ee32 # v4.6.2
         with:
-          name: xuping-scanner-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: xuping-scanner-release-apk
+          path: android/app/build/outputs/apk/release/app-release*.apk
 
-      # Hanya jalan kalau push-nya berupa tag versi (mis. v1.1.0) —
-      # inilah yang dibaca oleh fitur "Cek Update" di dalam aplikasi
-      # lewat GitHub API /releases/latest.
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release (tag builds only)
+        if: ${{ steps.version.outputs.IS_RELEASE == 'true' }}
+        uses: softprops/action-gh-release@c95fe1489396fe8a4f3a47b105c32b5f7361e2be # v2.2.1
         with:
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: android/app/build/outputs/apk/release/app-release*.apk
           name: ${{ github.ref_name }}
           generate_release_notes: true
         env:
