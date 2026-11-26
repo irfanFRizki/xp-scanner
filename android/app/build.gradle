@@ -25,12 +25,35 @@ android {
                 keyPassword System.getenv("XUPING_KEY_PASSWORD")
             }
         }
+        release {
+            def ksPath = System.getenv("XUPING_KEYSTORE_PATH")
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                def ksFile = file(ksPath)
+                if (!ksFile.exists()) {
+                    throw new GradleException("XUPING_KEYSTORE_PATH does not exist: ${ksPath}")
+                }
+                def storePass = System.getenv("XUPING_KEYSTORE_PASSWORD")
+                def alias = System.getenv("XUPING_KEY_ALIAS")
+                def keyPass = System.getenv("XUPING_KEY_PASSWORD")
+                if (!storePass || !alias || !keyPass) {
+                    throw new GradleException("XUPING_KEYSTORE_PASSWORD, XUPING_KEY_ALIAS, and XUPING_KEY_PASSWORD must all be set when XUPING_KEYSTORE_PATH is provided")
+                }
+                storeFile ksFile
+                storePassword storePass
+                keyAlias alias
+                keyPassword keyPass
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
+            def ksPath = System.getenv("XUPING_KEYSTORE_PATH")
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
