@@ -25,12 +25,25 @@ android {
                 keyPassword System.getenv("XUPING_KEY_PASSWORD")
             }
         }
+        release {
+            def ksPath = System.getenv("XUPING_KEYSTORE_PATH")
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                storeFile file(ksPath)
+                storePassword System.getenv("XUPING_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("XUPING_KEY_ALIAS")
+                keyPassword System.getenv("XUPING_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
+            def ksPath = System.getenv("XUPING_KEYSTORE_PATH")
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
