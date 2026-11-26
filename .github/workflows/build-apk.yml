@@ -251,7 +251,7 @@ jobs:
             exit "$APKSIGNER_EXIT"
           fi
 
-          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n1 | sed -E 's/^[^:]*:[[:space:]]*//' || true)
+          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -iE '(Signer #1 certificate|V2 Signer):[[:space:]]*SHA-256 digest:' | head -n1 | sed -E 's/^[^:]*:[[:space:]]*//' || true)
           if [ -z "$RAW_FP" ]; then
             echo "::error::Could not extract SHA-256 fingerprint from APK using apksigner"
             echo "apksigner output:"
