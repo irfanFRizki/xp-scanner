@@ -13,7 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # All 4 signing secrets must be present for release builds
       HAS_SIGNING: ${{ secrets.XUPING_KEYSTORE_BASE64 != '' && secrets.XUPING_KEYSTORE_PASSWORD != '' && secrets.XUPING_KEY_ALIAS != '' && secrets.XUPING_KEY_PASSWORD != '' }}
+      # Expected SHA-256 fingerprint of the v1.0.3+ release key (CN=Xuping Scanner)
+      EXPECTED_FINGERPRINT: "D0:86:64:F1:13:E7:E5:67:00:93:35:48:5B:F3:58:0B:64:F2:C1:C5:02:17:76:BF:0D:AB:66:26:F6:E1:2A:FD"
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -35,26 +38,23 @@ jobs:
       - name: Determine version
         id: version
         run: |
+          # versionCode from GITHUB_RUN_NUMBER (always >= 2, monotonic)
+          VERSION_CODE=$(( GITHUB_RUN_NUMBER ))
+          if (( VERSION_CODE < 2 )); then VERSION_CODE=2; fi
+
+          # versionName from tag if tag build, else dev version
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             IS_RELEASE=true
-            IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION%%-*}"
-            MAJOR=${MAJOR:-0}
-            MINOR=${MINOR:-0}
-            PATCH=${PATCH:-0}
-            VERSION_CODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
           else
-            # PR/branch build: use run number as patch, 0.0.<run_number>-dev
             VERSION="0.0.${GITHUB_RUN_NUMBER}-dev"
             IS_RELEASE=false
-            VERSION_CODE=$((10#$GITHUB_RUN_NUMBER))
           fi
-          if (( VERSION_CODE < 1 )); then
-            VERSION_CODE=1
-          fi
+
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "IS_RELEASE=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "versionCode -> ${VERSION_CODE}, versionName -> ${VERSION}, isRelease -> ${IS_RELEASE}"
 
       - name: Inject version into www/index.html
         env:
@@ -70,7 +70,7 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.VERSION }}
         run: |
           sed -i -E "s/^([[:space:]]*versionCode )[0-9]+/\1${VERSION_CODE}/" android/app/build.gradle
-          sed -i -E "s/^([[:space:]]*versionName )\"[^\"]*\"/\1\"${VERSION_NAME}\"/" android/app/build.gradle
+          sed -i -E 's/^([[:space:]]*versionName )"[^"]*"/\1"'"${VERSION_NAME}"'"/' android/app/build.gradle
           grep -qE "^[[:space:]]*versionCode ${VERSION_CODE}$" android/app/build.gradle
           grep -qF "versionName \"${VERSION_NAME}\"" android/app/build.gradle
           echo "android/app/build.gradle versionCode -> ${VERSION_CODE}, versionName -> ${VERSION_NAME}"
@@ -111,16 +111,30 @@ jobs:
           XUPING_KEY_PASSWORD: ${{ secrets.XUPING_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Verify signed release APK
+      - name: Verify release APK fingerprint
         if: ${{ env.HAS_SIGNING == 'true' }}
+        env:
+          EXPECTED_FINGERPRINT: ${{ env.EXPECTED_FINGERPRINT }}
         run: |
-          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          test -f "$APK_PATH"
-          APKSIGNER="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [ -n "$APKSIGNER" ]; then
-            "$APKSIGNER" verify --verbose "$APK_PATH"
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          # Extract SHA-256 fingerprint from APK signing certificate
+          FP=$(keytool -printcert -jarfile "$APK" 2>/dev/null | grep -i 'SHA256:' | head -n1 | sed -E 's/.*SHA256:[[:space:]]*//' | tr -d '\r ')
+          if [ -z "$FP" ]; then
+            echo "::error::Could not extract fingerprint from APK"
+            exit 1
+          fi
+          # Normalize: strip any existing colons/spaces, uppercase, then re-insert colons
+          FP=$(echo "$FP" | tr '[:lower:]' '[:upper:]' | sed 's/://g' | tr -d '[:space:]' | sed 's/\([0-9A-F]\{2\}\)/\1:/g; s/:$//')
+          echo "APK SHA-256 fingerprint: $FP"
+          if [ "$FP" = "$EXPECTED_FINGERPRINT" ]; then
+            echo "Fingerprint MATCH ✓ (matches v1.0.3+ release key)"
           else
-            echo "apksigner not found; verified signed output filename $APK_PATH exists"
+            echo "::warning::Fingerprint MISMATCH (expected v1.0.3+ release key)"
+            if [ "${{ steps.version.outputs.IS_RELEASE }}" = "true" ]; then
+              echo "::error::Release tag build fingerprint does not match v1.0.3+ key — in-place update will fail"
+              exit 1
+            fi
           fi
 
       - name: Clean up signing keystore
