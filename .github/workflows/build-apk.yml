@@ -6,7 +6,12 @@ on:
     tags: ['v*.*.*']
   pull_request:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      skip-release:
+        description: 'Skip GitHub Release creation (for testing signed build + fingerprint)'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -71,7 +76,7 @@ jobs:
           VERSION_CODE: ${{ steps.version.outputs.VERSION_CODE }}
           VERSION_NAME: ${{ steps.version.outputs.VERSION }}
         run: |
-          sed -i -E "s/^([[:space:]]*versionCode )[0-9]+/\1${VERSION_CODE}/" android/app/build.gradle
+          sed -i -E "s/^([[:space:]]*versionCode )[0-9]+/\\1${VERSION_CODE}/" android/app/build.gradle
           sed -i -E 's/^([[:space:]]*versionName )"[^"]*"/\1"'"${VERSION_NAME}"'"/' android/app/build.gradle
           grep -qE "^[[:space:]]*versionCode ${VERSION_CODE}$" android/app/build.gradle
           grep -qF "versionName \"${VERSION_NAME}\"" android/app/build.gradle
@@ -125,30 +130,132 @@ jobs:
           EXPECTED_FINGERPRINT: ${{ env.EXPECTED_FINGERPRINT }}
           IS_RELEASE: ${{ steps.version.outputs.IS_RELEASE }}
         run: |
+          set -euo pipefail
           APK="android/app/build/outputs/apk/release/app-release.apk"
           if [ ! -f "$APK" ]; then
             echo "::error::Signed release APK not found at $APK"
             exit 1
           fi
 
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          APKSIGNER=""
-          if [ -n "$SDK_ROOT" ] && [ -d "$SDK_ROOT/build-tools" ]; then
-            for d in $(ls -1 "$SDK_ROOT/build-tools" | sort -V); do
-              if [ -x "$SDK_ROOT/build-tools/$d/apksigner" ]; then
-                APKSIGNER="$SDK_ROOT/build-tools/$d/apksigner"
+          # ---- locate apksigner (no apt-get; use runner's Android SDK) ----
+          # GitHub-hosted ubuntu runners have Android SDK at /usr/local/lib/android/sdk
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BUILD_TOOLS_DIR="$SDK_ROOT/build-tools"
+
+          find_apksigner() {
+            local dir="$1"
+            local p matches=""
+            for p in "$dir"/*/apksigner; do
+              if [ -x "$p" ]; then
+                matches+="${p}"$'\n'
               fi
             done
-          fi
+            if [ -n "$matches" ]; then
+              printf '%s' "$matches" | sort -V | tail -n1
+            fi
+          }
+
+          echo "Searching for apksigner in: $BUILD_TOOLS_DIR/*/apksigner"
+          APKSIGNER=$(find_apksigner "$BUILD_TOOLS_DIR")
+
           if [ -z "$APKSIGNER" ]; then
-            echo "::error::apksigner not found under Android SDK build-tools"
-            exit 1
+            echo "::warning::apksigner not found under $BUILD_TOOLS_DIR"
+            echo "Checked SDK_ROOT=$SDK_ROOT (ANDROID_HOME=${ANDROID_HOME:-<unset>}, ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>})"
+            if [ -d "$BUILD_TOOLS_DIR" ]; then
+              echo "Contents of $BUILD_TOOLS_DIR:"
+              ls -la "$BUILD_TOOLS_DIR" || true
+            elif [ -d "$SDK_ROOT" ]; then
+              echo "Directory $BUILD_TOOLS_DIR does not exist. Contents of $SDK_ROOT:"
+              ls -la "$SDK_ROOT" || true
+            else
+              echo "SDK_ROOT directory $SDK_ROOT does not exist."
+            fi
+            for candidate in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "/usr/local/lib/android/sdk" "/opt/android/sdk" "/home/runner/android-sdk" "${HOME:+$HOME/Android/Sdk}"; do
+              if [ -n "$candidate" ] && [ -d "$candidate/build-tools" ]; then
+                echo "Candidate SDK build-tools directory found: $candidate/build-tools"
+                ls -la "$candidate/build-tools" || true
+              fi
+            done
+
+            # Derive required build-tools version from project config / AGP
+            BT_VERSION=$(sed -nE "s/^[[:space:]]*buildToolsVersion([[:space:]]*=[[:space:]]*|[[:space:]]+)['\"]([^'\"]+)['\"].*/\2/p" android/app/build.gradle android/variables.gradle 2>/dev/null | head -n1 || true)
+            AGP_VERSION=$(sed -nE "s/.*com\.android\.tools\.build:gradle:([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p" android/build.gradle 2>/dev/null | head -n1 || true)
+            COMPILE_SDK=$(sed -nE "s/^[[:space:]]*compileSdkVersion[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p" android/variables.gradle 2>/dev/null | head -n1 || true)
+
+            if [ -z "$BT_VERSION" ] && [ -n "$AGP_VERSION" ]; then
+              AGP_MM=$(printf '%s' "$AGP_VERSION" | cut -d. -f1,2)
+              case "$AGP_MM" in
+                7.0|7.1|7.2|7.3|7.4) BT_VERSION="30.0.3" ;;
+                8.0|8.1)             BT_VERSION="33.0.1" ;;
+                8.2|8.3|8.4|8.5|8.6) BT_VERSION="34.0.0" ;;
+                8.7|8.8|8.9|8.10)    BT_VERSION="35.0.0" ;;
+                8.11|8.12|8.13|9.*)  BT_VERSION="36.0.0" ;;
+                *)
+                  [ -n "$COMPILE_SDK" ] && BT_VERSION="${COMPILE_SDK}.0.0"
+                  ;;
+              esac
+              echo "Derived build-tools version from AGP $AGP_VERSION: ${BT_VERSION:-<unknown>}"
+            elif [ -n "$BT_VERSION" ]; then
+              echo "Using explicit buildToolsVersion from Gradle config: $BT_VERSION"
+            fi
+
+            if [ -z "$BT_VERSION" ] && [ -n "$COMPILE_SDK" ]; then
+              BT_VERSION="${COMPILE_SDK}.0.0"
+              echo "Derived build-tools version from compileSdkVersion $COMPILE_SDK: $BT_VERSION"
+            fi
+
+            if [ -z "$BT_VERSION" ]; then
+              echo "::error::Could not determine required build-tools version from Gradle config or AGP (${AGP_VERSION:-<unknown>}); checked $BUILD_TOOLS_DIR"
+              exit 1
+            fi
+
+            SDKMGR=""
+            for mgr in "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager "$SDK_ROOT/tools/bin/sdkmanager"; do
+              if [ -x "$mgr" ]; then
+                SDKMGR="$mgr"
+                break
+              fi
+            done
+            if [ -z "$SDKMGR" ]; then
+              SDKMGR=$(command -v sdkmanager 2>/dev/null || true)
+            fi
+
+            if [ -n "$SDKMGR" ] && [ -x "$SDKMGR" ]; then
+              echo "Attempting to install build-tools;$BT_VERSION via $SDKMGR..."
+              set +e
+              (set +o pipefail; yes | "$SDKMGR" --sdk_root="$SDK_ROOT" "build-tools;$BT_VERSION")
+              SDKMGR_EXIT=$?
+              set -e
+              if [ "$SDKMGR_EXIT" -ne 0 ]; then
+                echo "::warning::sdkmanager exited with status $SDKMGR_EXIT"
+              fi
+              APKSIGNER=$(find_apksigner "$BUILD_TOOLS_DIR")
+            else
+              echo "::warning::sdkmanager not found under $SDK_ROOT or PATH"
+            fi
           fi
 
-          CERT_INFO=$("$APKSIGNER" verify --print-certs "$APK")
-          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n1 | sed -E 's/^[^:]*:[[:space:]]*//')
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::Could not locate apksigner. Checked directory: $BUILD_TOOLS_DIR (SDK_ROOT=$SDK_ROOT). Tried sdkmanager install of build-tools;${BT_VERSION:-<unknown>}."
+            exit 1
+          fi
+          echo "Using apksigner: $APKSIGNER"
+
+          # ---- verify fingerprint ----
+          if CERT_INFO=$("$APKSIGNER" verify --print-certs "$APK" 2>&1); then
+            :
+          else
+            APKSIGNER_EXIT=$?
+            echo "::error::apksigner verify failed with exit code $APKSIGNER_EXIT"
+            printf '%s\n' "$CERT_INFO"
+            exit "$APKSIGNER_EXIT"
+          fi
+
+          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'Signer #1 certificate SHA-256 digest:' | head -n1 | sed -E 's/^[^:]*:[[:space:]]*//' || true)
           if [ -z "$RAW_FP" ]; then
             echo "::error::Could not extract SHA-256 fingerprint from APK using apksigner"
+            echo "apksigner output:"
+            printf '%s\n' "$CERT_INFO"
             exit 1
           fi
 
@@ -186,7 +293,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create GitHub Release (tag builds only)
-        if: ${{ steps.version.outputs.IS_RELEASE == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' && steps.version.outputs.IS_RELEASE == 'true' && github.event.inputs.skip-release != 'true' }}
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           files: android/app/build/outputs/apk/release/app-release.apk
