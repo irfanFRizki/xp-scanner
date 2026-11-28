@@ -15,6 +15,7 @@ sudah ada, lewat fungsi `getKodeBySupplierRef()` yang sudah kamu punya.
 2. Buka file `GAS_PATCH_doGet.gs.txt` di folder ini.
 3. **Ganti** fungsi `doGet(e)` yang lama di Code.gs dengan isi file
    tersebut (jangan sampai ada 2 fungsi `doGet` — hapus yang lama).
+   > **Penting (v1.0.10+):** Patch ini sekarang juga mencari **kode kanonik langsung** (kolom kode/Code), bukan cuma kode supplier di kolom refD/refE. Setelah update patch, **deploy ulang Web App** (New version → Deploy) supaya perubahan aktif.
 4. Simpan, lalu **Deploy → Manage deployments → Edit (pensil) → New version**
    pada deployment web app yang sudah ada (atau buat baru):
    - Execute as: **Me**
@@ -159,15 +160,24 @@ GitHub Actions akan `npm install` otomatis dari `package.json`.
 
 ## Fitur foto (sheet "Link foto")
 
-Kolom A di sheet **"Link foto"** dibaca sebagai kode kanonik, lalu URL foto
+Kolom A di sheet **Link foto** dibaca sebagai kode kanonik, lalu URL foto
 diambil otomatis dari kolom lain di baris yang sama (mis. kolom E) — tidak
 perlu hardcode nomor kolom, backend otomatis mendeteksi sel mana yang berisi
 URL (`http...`, `.jpg`, `.png`, dll).
 
 Kalau kode tidak ditemukan di sheet foto, atau link fotonya rusak/404, app
 tetap menampilkan kode & deskripsi seperti biasa — cuma bagian foto yang
-menampilkan pesan "Foto tidak tersedia" / "Gagal memuat foto". Tap foto
-untuk lihat versi fullscreen.
+menampilkan pesan "Foto tidak tersedia" / "Gagal memuat foto". **Tap foto
+untuk buka fullscreen — dukung pinch-zoom (dua jari) dan double-tap zoom.**
+
+## Pencarian kode (v1.0.10+)
+
+Kotak pencarian sekarang menerima:
+- **Kode supplier** (seperti sebelumnya: `X/2024`, `X001237323`, dll)
+- **Kode kanonik barang** (kolom kode/Code di sheet, mis. `0121260200`)
+
+Hasil pencarian akan menampilkan kode kanonik, deskripsi, PL+Tahun, dan foto
+(jika tersedia).
 
 ## Build APK release (bertanda tangan, buat upload ke Play Store)
 
