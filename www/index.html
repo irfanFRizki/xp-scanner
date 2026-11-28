@@ -247,6 +247,9 @@
     <label>URL Web App GAS (hasil deploy Apps Script)</label>
     <input id="inputGasUrl" type="text" placeholder="https://script.google.com/macros/s/XXXXX/exec">
 
+    <label>ID Spreadsheet (opsional / jika dinamis)</label>
+    <input id="inputSheetId" type="text" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms">
+
     <label>Repo GitHub untuk update (format: owner/nama-repo)</label>
     <input id="inputRepo" type="text" placeholder="irfanFRizki/xp-scanner">
 
@@ -265,8 +268,9 @@
 
 <script>
 (function(){
-  var APP_VERSION = '1.0.10'; // ⚠️ Naikkan angka ini tiap kali rilis versi baru (samakan dengan tag git vX.Y.Z)
+  var APP_VERSION = '1.0.11'; // ⚠️ Naikkan angka ini tiap kali rilis versi baru (samakan dengan tag git vX.Y.Z)
   var STORAGE_KEY_URL = 'xuping_gas_url';
+  var STORAGE_KEY_SHEET_ID = 'xuping_sheet_id';
   var STORAGE_KEY_HISTORY = 'xuping_history';
   var STORAGE_KEY_REPO = 'xuping_gh_repo';
   var qrRegionId = 'reader';
@@ -292,6 +296,18 @@
 
   function getRepo(){ return localStorage.getItem(STORAGE_KEY_REPO) || ''; }
   function setRepo(r){ localStorage.setItem(STORAGE_KEY_REPO, r); }
+
+  function normalizeSheetId(v){
+    var s = String(v || '').trim();
+    var m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return m ? m[1] : s;
+  }
+  function getSheetId(){ return localStorage.getItem(STORAGE_KEY_SHEET_ID) || ''; }
+  function setSheetId(v){
+    var s = normalizeSheetId(v);
+    if (s) localStorage.setItem(STORAGE_KEY_SHEET_ID, s);
+    else localStorage.removeItem(STORAGE_KEY_SHEET_ID);
+  }
 
 
   function getHistory(){
@@ -662,7 +678,11 @@
         : 'Server agak lambat, mencoba lagi...'
     );
 
-    jsonpRequest(gasUrl, { action: 'lookup', kode: refCode }, function(err, data){
+    var params = { action: 'lookup', kode: refCode };
+    var sheetId = normalizeSheetId(getSheetId());
+    if (sheetId) params.sheetId = sheetId;
+
+    jsonpRequest(gasUrl, params, function(err, data){
       if (err){
         if (err.isTimeout && attempt < 2){
           attemptLookup(gasUrl, refCode, attempt + 1);
@@ -755,6 +775,7 @@
   // ── Settings modal ───────────────────────────────────────
   function openSettings(){
     $('inputGasUrl').value = getGasUrl();
+    $('inputSheetId').value = getSheetId();
     $('inputRepo').value = getRepo();
     $('appVersionLabel').textContent = 'Versi terpasang: v' + APP_VERSION;
     $('modalSettings').classList.add('active');
@@ -1073,6 +1094,7 @@
   $('btnCloseSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', function(){
     setGasUrl($('inputGasUrl').value.trim());
+    setSheetId($('inputSheetId').value);
     setRepo($('inputRepo').value.trim());
     closeSettings();
     setStatus('Pengaturan disimpan.', 'ok');

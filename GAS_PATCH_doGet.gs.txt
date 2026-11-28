@@ -29,12 +29,14 @@ function doGet(e) {
  * Pakai TextFinder supaya tidak perlu baca seluruh sheet tiap request —
  * penting kalau sheet "Link foto" isinya ribuan baris.
  */
-function getFotoByKode(kode) {
+function getFotoByKode(kode, ssId) {
   try {
     kode = String(kode || '').trim();
     if (!kode) return null;
 
-    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var targetSsId = ssId || (typeof SPREADSHEET_ID !== 'undefined' ? SPREADSHEET_ID : null);
+    var ss = targetSsId ? SpreadsheetApp.openById(targetSsId) : SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) return null;
     var sheet = ss.getSheetByName(SHEET_NAME_FOTO);
     if (!sheet) return null;
 
@@ -80,10 +82,10 @@ function getFotoByKode(kode) {
  *
  * @return {Array} Array of { kode, deskripsi, plsSupplier, plsAll }
  */
-function _lookupKodeDetail(refCode) {
+function _lookupKodeDetail(refCode, ssId) {
   if (!refCode) return [];
   var refTrim = String(refCode).trim().toUpperCase();
-  var rows = _allPLRows();
+  var rows = _allPLRows(ssId);
 
   function buildLabel(row) {
     var kolian = String(row.kolian || '').trim();
@@ -159,6 +161,7 @@ function _lookupKodeDetail(refCode) {
 
 /**
  * Endpoint JSONP: ?action=lookup&kode=X001237323&callback=namaFungsiJS
+ * Opsional: &sheetId=... (atau &spreadsheetId=...) untuk override SPREADSHEET_ID.
  * Dipakai oleh aplikasi Android (fetch via <script> tag, bukan fetch()
  * biasa, supaya tidak kena blokir CORS bawaan Apps Script).
  * Setiap hasil kode kanonik ikut dilengkapi field `foto` (URL) kalau
@@ -167,14 +170,15 @@ function _lookupKodeDetail(refCode) {
  */
 function _apiLookup(params) {
   var kode = params.kode || params.ref || '';
+  var ssId = params.sheetId || params.spreadsheetId || (typeof SPREADSHEET_ID !== 'undefined' ? SPREADSHEET_ID : null);
   var callback = params.callback;
   var payload;
 
   try {
-    var hasil = _lookupKodeDetail(kode);
+    var hasil = _lookupKodeDetail(kode, ssId);
 
     hasil.forEach(function(item) {
-      var foto = getFotoByKode(item.kode);
+      var foto = getFotoByKode(item.kode, ssId);
       item.foto = (foto && foto.url) ? foto.url : '';
     });
 

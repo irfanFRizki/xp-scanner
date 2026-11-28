@@ -1,6 +1,6 @@
 {
   "name": "xuping-scanner",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Aplikasi Android scan kode supplier -> kode kanonik (Packing List XUPING)",
   "scripts": {
     "sync": "cap sync android"
