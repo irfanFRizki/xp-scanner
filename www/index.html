@@ -297,6 +297,16 @@
     localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(h));
     renderHistory();
   }
+  function formatDate(ts){
+    var d = new Date(ts);
+    var day = ('0' + d.getDate()).slice(-2);
+    var month = ('0' + (d.getMonth()+1)).slice(-2);
+    var year = d.getFullYear();
+    var hours = ('0' + d.getHours()).slice(-2);
+    var minutes = ('0' + d.getMinutes()).slice(-2);
+    return day + '/' + month + '/' + year + ' ' + hours + ':' + minutes;
+  }
+
   function renderHistory(){
     var h = getHistory();
     elHistoryList.innerHTML = '';
@@ -307,7 +317,8 @@
     h.forEach(function(item){
       var row = document.createElement('div');
       row.className = 'history-item';
-      row.innerHTML = '<span>' + escapeHtml(item.ref) + '</span><span>' + escapeHtml(item.kode) + '</span>';
+      var tsHtml = item.ts ? '<span style="color:var(--text-muted);font-size:10px;margin-left:8px;">' + formatDate(item.ts) + '</span>' : '';
+      row.innerHTML = '<span>' + escapeHtml(item.ref) + '</span><span>' + escapeHtml(item.kode) + tsHtml + '</span>';
       row.style.cursor = 'pointer';
       row.addEventListener('click', function(){
         elInput.value = item.ref;
