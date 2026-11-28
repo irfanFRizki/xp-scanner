@@ -174,7 +174,10 @@
     </div>
 
     <button class="btn btn-scan" id="btnScan">📷 Scan Barcode / QR</button>
+    <button class="btn btn-outline" id="btnGallery" style="width:100%; justify-content:center;">🖼 Pilih dari Galeri</button>
+    <input type="file" id="inputGallery" accept="image/*" style="display:none;">
     <div id="reader"></div>
+    <div id="fileReader" style="position:absolute; left:-9999px;"></div>
     <button class="btn btn-outline" id="btnStopScan" style="display:none;">Tutup Kamera</button>
 
     <div id="status" class="status"></div>
@@ -273,6 +276,8 @@
   var elReader = $('reader');
   var elBtnScan = $('btnScan');
   var elBtnStopScan = $('btnStopScan');
+  var elBtnGallery = $('btnGallery');
+  var elInputGallery = $('inputGallery');
 
   function getGasUrl(){ return localStorage.getItem(STORAGE_KEY_URL) || ''; }
   function setGasUrl(u){ localStorage.setItem(STORAGE_KEY_URL, u); }
@@ -596,6 +601,22 @@
     elBtnStopScan.style.display = 'none';
   }
 
+  function scanFromFile(file){
+    if (!file) return;
+    setLoadingStatus('Membaca barcode dari gambar...');
+    Promise.resolve().then(function(){
+      return new Html5Qrcode('fileReader').scanFileV2(file, false);
+    }).then(function(res){
+      var decodedText = res && res.decodedText ? String(res.decodedText).trim() : '';
+      if (!decodedText) throw new Error('empty');
+      if (scanning) stopScan();
+      elInput.value = decodedText;
+      doLookup(decodedText);
+    }).catch(function(){
+      setStatus('Tidak ada barcode/QR yang terbaca di gambar.', 'err');
+    });
+  }
+
   // ── Settings modal ───────────────────────────────────────
   function openSettings(){
     $('inputGasUrl').value = getGasUrl();
@@ -904,6 +925,15 @@
   elInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') doLookup(elInput.value); });
   elBtnScan.addEventListener('click', startScan);
   elBtnStopScan.addEventListener('click', stopScan);
+  elBtnGallery.addEventListener('click', function(){
+    elInputGallery.value = '';
+    elInputGallery.click();
+  });
+  elInputGallery.addEventListener('change', function(e){
+    var file = e.target.files && e.target.files[0];
+    elInputGallery.value = '';
+    if (file) scanFromFile(file);
+  });
   $('btnSettings').addEventListener('click', openSettings);
   $('btnCloseSettings').addEventListener('click', closeSettings);
   $('btnSaveSettings').addEventListener('click', function(){
