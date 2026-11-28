@@ -16,6 +16,7 @@ sudah ada, lewat fungsi `getKodeBySupplierRef()` yang sudah kamu punya.
 3. **Ganti** fungsi `doGet(e)` yang lama di Code.gs dengan isi file
    tersebut (jangan sampai ada 2 fungsi `doGet` — hapus yang lama).
    > **Penting (v1.0.10+):** Patch ini sekarang juga mencari **kode kanonik langsung** (kolom kode/Code), bukan cuma kode supplier di kolom refD/refE. Setelah update patch, **deploy ulang Web App** (New version → Deploy) supaya perubahan aktif.
+   > **Penting (v1.0.11+):** Aplikasi mendukung input **ID Spreadsheet (opsional / jika dinamis)** di Pengaturan (`⚙`) yang dikirim sebagai parameter `sheetId` ke Web App GAS. Jika ingin mengubah Spreadsheet tanpa mengedit `SPREADSHEET_ID` di `Code.gs`, perbarui `Code.gs` dengan `GAS_PATCH_doGet.gs.txt` terbaru (dan pastikan `_allPLRows(ssId)` di `Code.gs` memakai `SpreadsheetApp.openById(ssId || SPREADSHEET_ID)`), lalu **Deploy → Manage deployments → Edit → New version**.
 4. Simpan, lalu **Deploy → Manage deployments → Edit (pensil) → New version**
    pada deployment web app yang sudah ada (atau buat baru):
    - Execute as: **Me**
@@ -53,7 +54,7 @@ Begitu di-push, workflow `.github/workflows/build-apk.yml` otomatis jalan:
 ## Langkah 4 — Pertama kali buka app di HP
 
 1. Buka app, tap ikon ⚙ di pojok kanan atas.
-2. Paste URL `/exec` dari Langkah 1, tap **Simpan**.
+2. Paste URL `/exec` dari Langkah 1, dan (opsional) isi **ID Spreadsheet** jika memakai spreadsheet dinamis, lalu tap **Simpan**.
 3. Coba ketik kode atau tap **Scan Barcode / QR**.
 
 ---
