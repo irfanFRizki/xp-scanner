@@ -99,7 +99,7 @@ function _lookupKodeDetail(refCode) {
   // Pass 1 — index SEMUA baris per kode (buat plsAll), satu kali baca saja.
   var kodeIndex = {}; // kode -> { deskripsi, plsAll: [], seenAll: {} }
   rows.forEach(function(row) {
-    var kode = row.kode;
+    var kode = String(row.kode || '').trim();
     if (!kode) return;
     if (!kodeIndex[kode]) kodeIndex[kode] = { deskripsi: row.deskripsi, plsAll: [], seenAll: {} };
     var idx = kodeIndex[kode];
@@ -112,21 +112,24 @@ function _lookupKodeDetail(refCode) {
     }
   });
 
-  // Pass 2 — cari baris yang benar-benar cocok dengan kode supplier yang
-  // dicari (buat plsSupplier).
+  // Pass 2 — cari baris yang benar-benar cocok dengan kode kanonik atau
+  // kode supplier yang dicari (buat plsSupplier).
   var byKode = {};
   var order = [];
   rows.forEach(function(row) {
-    var kode = row.kode;
+    var kode = String(row.kode || '').trim();
     if (!kode) return;
 
     var matched = false;
-    if (row.refE) {
-      var partsD = row.refE.toUpperCase().split('/').map(function(p) { return p.trim(); });
+    // Cocokkan langsung dengan kode kanonik (kolom kode/Code) — supaya user
+    // bisa mencari pakai kode barang itu sendiri, bukan cuma kode supplier.
+    if (kode.toUpperCase() === refTrim) matched = true;
+    if (!matched && row.refE) {
+      var partsD = String(row.refE).toUpperCase().split('/').map(function(p) { return p.trim(); });
       if (partsD.indexOf(refTrim) !== -1) matched = true;
     }
     if (!matched && row.refD) {
-      var partsC = row.refD.toUpperCase().split('/').map(function(p) { return p.trim(); });
+      var partsC = String(row.refD).toUpperCase().split('/').map(function(p) { return p.trim(); });
       if (partsC.indexOf(refTrim) !== -1) matched = true;
     }
     if (!matched) return;
